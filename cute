@@ -1,0 +1,40 @@
+#!/usr/bin/env ruby
+
+# David Selassie
+# April 28, 2011
+
+# USAGE: cute CMD
+# Enqueues a command to be executed by cuted.
+
+require 'rubygems'
+require 'trollop'
+
+options = Trollop::options do
+	opt :dir, 'run command in a dir other than the CWD', :type => :string
+	opt :threads, 'number of threads this process will use', :type => :int, :default => 1
+end
+
+# Find the named pipe that we write commands to.
+cmd_pipe_path = ENV['cuted_pipe'] ? ENV['cuted_pipe'] : '/tmp/cuted'
+# Find the current working directory or the one we want to execute the command in.
+cmd_dir = options[:dir] ? options[:dir] : Dir.pwd
+
+if ARGV.length < 1 then
+    STDERR.puts 'cute: You must specify a command'
+    exit -1
+end
+
+# Join together the rest of the arguments
+cmd = ARGV.join(' ')
+threads = options[:threads]
+
+# Make sure the server is runing by checking to see if the pipe is real.
+if not File.pipe?(cmd_pipe_path)
+	STDERR.puts 'cute: Can not find cuted pipe; did not execute command'
+	exit -1
+end
+
+File.open(cmd_pipe_path, 'w') do |cmd_pipe|
+	cmd_pipe.puts("#{cmd}\x00#{cmd_dir}\x00#{threads}")
+end
+
