@@ -16,7 +16,7 @@ config['server_pipe'] = ENV['cuted_pipe'] if ENV['cuted_pipe']
 
 options = Trollop::options do
   opt :dir, 'run command in a dir other than the CWD', :default => Dir.pwd
-  opt :threads, 'number of threads this process will use', :default => 1
+  opt :count, 'count of this process', :default => 1
   opt :pipe, 'server pipe to submit commands to', :default => config['server_pipe']
 end
 Trollop::die 'cute: You must specify a command' if ARGV.length < 1
@@ -31,5 +31,5 @@ if not File.pipe?(options[:pipe])
 end
 
 File.open(options[:pipe], 'w') do |cmd_pipe|
-  cmd_pipe.puts("#{cmd}\x00#{options[:dir]}\x00#{options[:threads]}")
+  cmd_pipe.puts("#{cmd}\x00#{options[:dir]}\x00#{options[:count]}")
 end
