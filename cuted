@@ -6,7 +6,6 @@
 # USAGE: cuted start | stop | run [-- ...]
 # A simple process queue daemon. Add processes using the cute command.
 
-require 'rubygems'
 # Requires a daemonizer!
 require 'daemons'
 # Requires the "nice" command line parser http://trollop.rubyforge.org/.
@@ -15,148 +14,151 @@ require 'trollop'
 require 'parseconfig'
 require 'logger'
 require 'shellwords'
+require 'fileutils'
 
-Daemons.run_proc('cuted', :dir => '/tmp', :log_output => true) do
-  logger = Logger.new(STDOUT)
-
-  # Set up defaults that might be overwritten.
-  config = {'max_concurrent' => 4, 'log' => true}
-  # See if there's any systemwide settings in /etc/cuterc .
-  config.merge!(ParseConfig.new('/etc/cuterc').params) if File.exists?('/etc/cuterc')
-  # See if there's any user settings in ~/.cuterc and write them on top.
-  config.merge!(ParseConfig.new(File.expand_path('~/.cuterc')).params) if File.exists?(File.expand_path('~/.cuterc'))
-
-  # Set up the command line options.
-  # TODO: Show the defaults here that were set above, but don't actually use them if they aren't specified on the cmd line.
-  options = Trollop::options do
-    opt :max_concurrent, 'maximum number of processes simultaneously', :type => :int
-    opt :log, 'log', :type => :bool
-    opt :prowl_key, 'Prowl API key to alert'
+def fork_cmd(cmd, cmd_dir, threads)
+  # Now actually spawn the new process. Remember fork copies all in scope variables.
+  pid = fork do
+    # Make sure the run directory exists.
+    FileUtils.makedirs(cmd_dir) if not File.directory?(cmd_dir)
+    # Execute the command in that directory.
+    Dir.chdir(cmd_dir) do
+      if $options[:log] then
+        spawn(cmd, [:out, :err] => ['cute.log', 'a'])
+      else
+        spawn(cmd)
+      end
+      Process.waitall
+    end
+					
+    # Go to http://www.prowlapp.com/ to check out an iPhone app that lets you push arbitrary notifications to your phones. You can register, sign up for an api_key, and paste it where it says KEYHERE, and it knows to forward it to your phones because of that key.
+    if $options[:prowl_key]
+      # Now notify that we're done.
+      $prowler.notify('cuted', "#{cmd} in #{cmd_dir} complete")
+    end
+					
+    # Tell the parent process that we're done and it'll remove it from the PIDs we're waiting for.
+    $cmd_pipe.puts("done #{Process.pid}\x00#cuted")
   end
 
-  cmd_pipe_path = config['cmd_pipe_path'] ? config['cmd_pipe_path'] : '/tmp/cuted'
-  max_concurrent = options[:max_concurrent] ? options[:max_concurrent] : config['max_concurrent']
-  logger.info "Will run #{max_concurrent} processes concurrently"
-  log = options[:log] ? options[:log] : config['log']
-  logger.info 'Will log command outputs' if log
-  prowl_key = options[:prowl_key] ? options[:prowl_key] : config['prowl_key']
-  logger.info "Will notify Prowl key #{prowl_key} of completions" if prowl_key
+  # Add the pid the number of threads the process has, this is so the max_concurrent will count this process multiple times.
+  $running << [pid] * threads
+
+  $logger.info "Spawned cmd '#{cmd}' in PID #{pid}"
+end
+
+Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
+  $logger = Logger.new(STDOUT)
+
+  # Set up defaults that might be overwritten.
+  config = {'max_concurrent' => 4, 'log' => true, 'server_pipe' => '~/.cuted.sock'}
+  # See if there's any user settings in ~/.cuterc and write them on top.
+  if File.exists?(File.expand_path('~/.cuterc'))
+    config.merge!(ParseConfig.new(File.expand_path('~/.cuterc')).params)
+  end
+
+  # Use the environment variable PROWLKEY if it's there.
+  config['prowl_key'] = ENV['PROWLKEY'] if ENV['PROWLKEY']
+
+  # Set up the command line options.
+  $options = Trollop::options do
+    opt :max, 'max simultaneous processes', :long => 'max-concurrent', :default => config['max_concurrent']
+    opt :log, 'log process output?', :default => config['log']
+    opt :prowl_key, 'Prowl API key to alert on completion', :default => config['prowl_key']
+    opt :pipe, 'pipe to listen on', :long => 'server-pipe', :default => config['server_pipe']
+  end
+
+  $logger.info "Will run #{$options[:max]} processes concurrently"
+  $logger.info 'Will log command outputs' if $options[:log]
+  $logger.info "Will notify Prowl key #{$options[:prowl_key]} of completions" if $options[:prowl_key]
 
   # Enclose the main loop code in an exception catcher.
   begin
+    $options[:pipe] = File.expand_path($options[:pipe])
     # Make a pipe that we'll read from here and others can write commands to.
-    `mkfifo #{cmd_pipe_path}`
-    raise RuntimeError, 'unable to open fifo' if not File.pipe?(cmd_pipe_path)
-    cmd_pipe = File.open(cmd_pipe_path, 'r+')
+    `mkfifo #{$options[:pipe]}`
+    raise RuntimeError, 'unable to open pipe' if not File.pipe?($options[:pipe])
+    $cmd_pipe = File.open($options[:pipe], 'r+')
     # Save the pipe path into the running environment.
-    ENV['cuted_pipe'] = cmd_pipe_path
+    ENV['cuted_pipe'] = $options[:pipe]
     ENV['cuted_pid'] = Process.pid.to_s
-    logger.info "Running in PID #{Process.pid}"
+    $logger.info "Server running in PID #{Process.pid}"
 
     # Set up Prowl notifications.
-    if prowl_key and require 'prowler'
-      Prowler.verify_certificate = false
-      prowler = Prowler.new(:application => Socket.gethostname, :api_key => prowl_key)
-      #prowler.logger = nil
+    if $options[:prowl_key]
+      begin
+        require 'prowler'
+
+        Prowler.verify_certificate = false
+        $prowler = Prowler.new(:application => Socket.gethostname, :api_key => $options[:prowl_key])
+        # $prowler.logger = nil
+      rescue LoadError
+        $options[:prowl_key] = nil
+        $logger.warn 'Can not load prowler module; not using Prowl key'
+      end
     end
 
     # A list of the process IDs currently running by this script.
-    pids = []
+    $running = []
+    # Queue of commands to run.
+    $queue = []
 
-    logger.info "Listening on #{cmd_pipe_path}"
+    $logger.info "Listening on pipe #{$options[:pipe]}"
     # Go through each main directory to run the simulation in.
-    cmd_pipe.each do |piped_command|
-      cmd, cmd_dir, thread_str = piped_command.strip.split("\x00")
-      threads = thread_str.to_i
+    $cmd_pipe.each do |piped_command|
+      cmd, cmd_dir, threads = piped_command.strip.split("\x00")
+      threads = threads.to_i
       cmd_dir = '.' if not cmd_dir
 			
-      logger.info "#{cmd_dir}> #{cmd}"
+      $logger.info "#{cmd_dir}> #{cmd}"
 			
       # If we get a meta command that controls this server:
       if cmd_dir == '#cuted' then
         tokens = Shellwords::shellwords(cmd)
-				
-        # If a child process is reporting it is done, remove it.
-        if tokens[0] == 'done' then
-          pids.delete(tokens[1].to_i)
-					
-          logger.info "Running #{pids}"
+	
+        case tokens[0]
+        when 'done' then
+          # If a child process is reporting it is done, remove it.
+          $running.delete(tokens[1].to_i)
+        when 'max_concurrent' then
           # If we want to change the max concurrent processes, do so.
-        elsif tokens[0] == 'max_concurrent' then
-          max_concurrent = tokens[1].to_i
-					
-          logger.info "Max concurrent is now #{max_concurrent}"
+          $options[:max] = tokens[1].to_i
+
+          $logger.info "Max concurrent is now #{max_concurrent}"
+        when 'log' then
           # If we want to change wheither programs are being logged.
-        elsif tokens[0] == 'log' then
-          log = tokens[1].match(/(true|t|yes|y|1)$/i) != nil
-					
-          logger.info "Logging is now #{log}"
-        elsif tokens[0] == 'prowl_key' then
-          prowl_key = tokens[1] ? tokens[1] : nil
+          $options[:log] = tokens[1].match(/(true|t|yes|y|1)$/i) != nil
 
-          logger.info "Now notifying Prowl key #{prowl_key}"
+          $logger.info "Logging is now #{log}"
+        when 'prowl_key' then
+          $options[:prowl_key] = tokens[1].length > 0 ? tokens[1] : nil
+
+          $logger.info "Now notifying Prowl key #{prowl_key}"
         else
-          logger.info "Unknown #cuted command #{cmd}"
+          $logger.info "Unknown #cuted command #{cmd}"
         end
-				
-        # Don't try to actually run this cmd.
-        next
-      end
-				
-      # If we're not already running the maximum number of processes, then try to.
-      if pids.length < max_concurrent or max_concurrent < 0
-        # Now actually spawn the new process. Remember fork copies all in scope variables.
-        pid = fork do
-          # Make sure the run directory exists.
-          Dir.mkdir(cmd_dir) if not File.directory?(cmd_dir)
-          # Execute the command in that directory.
-          Dir.chdir(cmd_dir) do
-            if RUBY_VERSION < '1.9.0' then
-              # We don't support logging since there's no spawn.
-              `#{cmd}`
-            else
-              cute_log = Logger.new(File.open('cute.log', 'a'))
-              cute_log.info "#{cmd_dir}> #{cmd}"
-              cute_log.close
-              if log then
-                spawn(cmd, [:out, :err] => ['cute.log', 'a'])
-              else
-                spawn(cmd)
-              end
-              Process.waitall
-            end
-          end
-					
-          # Go to http://www.prowlapp.com/ to check out an iPhone app that lets you push arbitrary notifications to your phones. You can register, sign up for an api_key, and paste it where it says KEYHERE, and it knows to forward it to your phones because of that key.
-          if prowl_key and require 'prowler'					
-            # Now notify that we're done.
-            prowler.notify('cuted', "#{cmd} in #{cmd_dir} complete")
-          end
-					
-          # Tell the parent process that we're done and it'll remove it from the PIDs we're waiting for.
-          cmd_pipe.puts("done #{Process.pid}\x00#cuted")
-        end
-
-        # Add the pid the number of threads the process has, this is so the max_concurrent will count this process multiple times.
-        pids << [pid] * threads
-					
-        logger.info "Running PIDS #{pids}"
-				
-        sleep(1) # If you have a low-resolution random number seeder that only uses the current second, waiting one second before launching the next program makes sure that the random numbers generated are not identical.
-        # If we're over the limit for maximum number of executables simultaneously, wait for one to finish.
       else
-        logger.info 'Hit max concurrent runs, waiting'
-				
-        # Immediately remove the process that finished. The process still sends a done command, but it's redundant.
-        pids.delete(Process.wait)
-        redo
+        # Only queue non-meta commands.
+        $queue.insert(0, [cmd, cmd_dir, threads])
+      end
+
+      # If we're not already running the maximum number of processes, then try to.
+      if $running.length < $options[:max] or $options[:max] < 0
+        fork_cmd(*$queue.pop) if not $queue.empty?
+
+        sleep(1)
+      else
+        $logger.debug 'Hit max concurrent runs, waiting'				
       end
     end
     # If any exceptions are thrown, including a signal to quit, clean up.
+  rescue Interrupt
   ensure
-    logger.info "Removed #{cmd_pipe_path}" if File.delete(cmd_pipe_path)
+    if File.pipe?($options[:pipe]) then
+      File.delete($options[:pipe])
+      $logger.info "Removed #{$options[:pipe]}"
+    end
 
-    logger.info 'Exiting'
+    $logger.info 'Exiting'
   end
 end
-

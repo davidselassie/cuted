@@ -6,34 +6,30 @@
 # USAGE: cute CMD
 # Enqueues a command to be executed by cuted.
 
-require 'rubygems'
 require 'trollop'
 
+# Setup the default server pipe path that might be overwritten.
+config = {'server_pipe' => File.expand_path('~/.cuted.sock')}
+
+# If we have the environment variable, use that instead.
+config['server_pipe'] = ENV['cuted_pipe'] if ENV['cuted_pipe']
+
 options = Trollop::options do
-  opt :dir, 'run command in a dir other than the CWD', :type => :string
-  opt :threads, 'number of threads this process will use', :type => :int, :default => 1
+  opt :dir, 'run command in a dir other than the CWD', :default => Dir.pwd
+  opt :threads, 'number of threads this process will use', :default => 1
+  opt :pipe, 'server pipe to submit commands to', :default => config['server_pipe']
 end
+Trollop::die 'cute: You must specify a command' if ARGV.length < 1
 
-# Find the named pipe that we write commands to.
-cmd_pipe_path = ENV['cuted_pipe'] ? ENV['cuted_pipe'] : '/tmp/cuted'
-# Find the current working directory or the one we want to execute the command in.
-cmd_dir = options[:dir] ? options[:dir] : Dir.pwd
-
-if ARGV.length < 1 then
-  STDERR.puts 'cute: You must specify a command'
-  exit -1
-end
-
-# Join together the rest of the arguments
+# Join together the rest of the arguments as the command.
 cmd = ARGV.join(' ')
-threads = options[:threads]
 
 # Make sure the server is runing by checking to see if the pipe is real.
-if not File.pipe?(cmd_pipe_path)
-  STDERR.puts 'cute: Can not find cuted pipe; did not execute command'
+if not File.pipe?(options[:pipe])
+  STDERR.puts 'cute: Can not find cuted pipe at '#{options[:pipe]}'; did not execute command'
   exit -1
 end
 
-File.open(cmd_pipe_path, 'w') do |cmd_pipe|
-  cmd_pipe.puts("#{cmd}\x00#{cmd_dir}\x00#{threads}")
+File.open(options[:pipe], 'w') do |cmd_pipe|
+  cmd_pipe.puts("#{cmd}\x00#{options[:dir]}\x00#{options[:threads]}")
 end
