@@ -10,8 +10,8 @@ require 'rubygems'
 require 'trollop'
 
 options = Trollop::options do
-	opt :dir, 'run command in a dir other than the CWD', :type => :string
-	opt :threads, 'number of threads this process will use', :type => :int, :default => 1
+  opt :dir, 'run command in a dir other than the CWD', :type => :string
+  opt :threads, 'number of threads this process will use', :type => :int, :default => 1
 end
 
 # Find the named pipe that we write commands to.
@@ -20,8 +20,8 @@ cmd_pipe_path = ENV['cuted_pipe'] ? ENV['cuted_pipe'] : '/tmp/cuted'
 cmd_dir = options[:dir] ? options[:dir] : Dir.pwd
 
 if ARGV.length < 1 then
-    STDERR.puts 'cute: You must specify a command'
-    exit -1
+  STDERR.puts 'cute: You must specify a command'
+  exit -1
 end
 
 # Join together the rest of the arguments
@@ -30,11 +30,10 @@ threads = options[:threads]
 
 # Make sure the server is runing by checking to see if the pipe is real.
 if not File.pipe?(cmd_pipe_path)
-	STDERR.puts 'cute: Can not find cuted pipe; did not execute command'
-	exit -1
+  STDERR.puts 'cute: Can not find cuted pipe; did not execute command'
+  exit -1
 end
 
 File.open(cmd_pipe_path, 'w') do |cmd_pipe|
-	cmd_pipe.puts("#{cmd}\x00#{cmd_dir}\x00#{threads}")
+  cmd_pipe.puts("#{cmd}\x00#{cmd_dir}\x00#{threads}")
 end
-
