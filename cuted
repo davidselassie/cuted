@@ -24,6 +24,10 @@ Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
   # See if there's any user settings in ~/.cuterc and write them on top.
   if File.exists?(File.expand_path('~/.cuterc'))
     config.merge!(ParseConfig.new(File.expand_path('~/.cuterc')).params)
+    # If the log variable is there but blank, make it nil.
+    if config['log'] and config['log'].strip.length == 0 then
+      config['log'] = nil
+    end
   end
 
   # Use the environment variable PROWLKEY if it's there.
@@ -31,11 +35,15 @@ Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
 
   logger.info "Will run #{config['max_concurrent']} processes concurrently"
   logger.info 'Will log command outputs' if config['log']
-  logger.info "Will notify Prowl key #{config['prowl_key']} of completions" if config['prowl_key']
+  if config['prowl_key'] then
+    logger.info "Will notify Prowl key #{config['prowl_key']} of completions"
+  end
 
   begin
     queue = CuteQueue.new(:logger => logger,
-                          :defaults => {:prowl_key => config['prowl_key']})
+                          :max_concurrent => config['max_concurrent']
+                          :defaults => {:prowl_key => config['prowl_key'],
+                          :log => config['log']})
     DRb.start_service(config['uri'], queue)
 
     logger.info "Running on #{DRb.uri}"

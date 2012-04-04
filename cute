@@ -10,15 +10,18 @@ require 'trollop'
 require 'drb'
 
 config = {'uri' => 'drbunix:///tmp/cuted.sock'}
-
-# If we have the environment variable, use that instead.
-config['uri'] = ENV['cuted_uri'] if ENV['cuted_uri']
+if File.exists?(File.expand_path('~/.cuterc')) then
+  config.merge!(ParseConfig.new(File.expand_path('~/.cuterc')).params)
+end
 
 options = Trollop::options do
   opt :dir, 'run command in a dir other than the CWD', :default => Dir.pwd
   opt :weight, 'weight of this command', :default => 1
   opt :priority, 'priority of this command', :default => 0
-  opt :uri, 'server to submit commands to', :type => :string, :default => config['uri']
+  opt :log, 'custom log file to use'
+  opt :prowl_key, 'custom Prowl key to notify'
+  opt :uri, 'server to submit commands to', :type => :string,
+    :default => ENV['cuted_uri'] || config['uri']
 end
 Trollop::die 'cute: You must specify a command' if ARGV.length < 1
 
@@ -27,7 +30,7 @@ cmd = ARGV.join(' ')
 
 begin
   DRb.start_service
-  queue = DRbObject.new(nil, options[:server])
+  queue = DRbObject.new(nil, options[:uri])
 
   # Get the real command stored in the queue.
   cmd = queue.push_cmd(cmd)
@@ -36,6 +39,10 @@ begin
   cmd.dir = options[:dir]
   cmd.priority = options[:priority]
   cmd.weight = options[:weight]
+  # Set a custom Prowl key if one is specified.
+  cmd.prowl_key = options[:prowl_key] if options[:prowl_key]
+  # Set a custom log if one is specified and it isn't empty.
+  cmd.log = options[:log] if options[:log] and options[:log].size > 0
 
   # Try to run tasks.
   queue.pop_run

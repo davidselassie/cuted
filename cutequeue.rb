@@ -7,8 +7,6 @@
 # Priority command queue.
 
 class CuteQueue
-  require_relative 'cutecommand'
-
   attr_accessor :running, :queue
 
   def initialize(opts = {})
@@ -27,7 +25,8 @@ class CuteQueue
 
     # Really we just need a command to be able to run.
     if not cmd.respond_to?(:run)
-        cmd = CuteCommand.new(cmd)
+      require_relative 'cutecommand'
+      cmd = CuteCommand.new(cmd)
     end
     
     # Set up the command with the default values.
