@@ -13,7 +13,7 @@ require 'parseconfig'
 require 'logger'
 require 'drb'
 
-require_relative 'cutequeue'
+require 'cuted/queue'
 
 Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
   logger = Logger.new(STDOUT)
@@ -40,10 +40,10 @@ Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
   end
 
   begin
-    queue = CuteQueue.new(:logger => logger,
-                          :max_concurrent => config['max_concurrent']
-                          :defaults => {:prowl_key => config['prowl_key'],
-                          :log => config['log']})
+    queue = Cuted::Queue.new(:logger => logger,
+                            :max_concurrent => config['max_concurrent'],
+                            :defaults => {:prowl_key => config['prowl_key'],
+                              :log => config['log']})
     DRb.start_service(config['uri'], queue)
 
     logger.info "Running on #{DRb.uri}"

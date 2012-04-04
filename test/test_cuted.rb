@@ -6,10 +6,10 @@
 
 require 'riot'
 
-context 'CuteCommand' do
-  require_relative 'cutecommand'
+context 'cuted/command' do
+  require 'cuted/command'
   
-  setup { CuteCommand.new('echo hello') }
+  setup { Cuted::Command.new('echo hello') }
 
   context 'checking defaults' do
     asserts(:cmd).equals('echo hello')
@@ -20,7 +20,7 @@ context 'CuteCommand' do
 
   context 'checking init' do
     setup do
-      CuteCommand.new('echo hello', :dir => '/tmp', :log => nil)
+      Cuted::Command.new('echo hello', :dir => '/tmp', :log => nil)
     end
 
     asserts(:cmd).equals('echo hello')
@@ -75,13 +75,14 @@ context 'CuteCommand' do
   end
 end
 
-context 'CuteQueue' do
-  require_relative 'cutequeue'
+context 'cuted/queue' do
+  require 'cuted/queue'
+  require 'cuted/command'
 
-  setup { CuteQueue.new(:cmd_defaults => {:log => nil})}
+  setup { Cuted::Queue.new(:cmd_defaults => {:log => nil})}
 
   context 'check init' do
-    setup { CuteQueue.new }
+    setup { Cuted::Queue.new }
 
     asserts(:queue).size(0)
     asserts(:running).size(0)
@@ -91,7 +92,7 @@ context 'CuteQueue' do
 
   context 'checks command defaults' do
     setup do
-      topic = CuteQueue.new(:defaults => {:log => 'deflog.out',
+      topic = Cuted::Queue.new(:defaults => {:log => 'deflog.out',
                               :weight => 2, :dir => '/tmp'})
       topic.push_cmd('echo default')
       topic
@@ -114,7 +115,7 @@ context 'CuteQueue' do
 
   context 'adds a command' do
     setup do
-      topic.push_cmd(CuteCommand.new('echo hi1'))
+      topic.push_cmd(Cuted::Command.new('echo hi1'))
       topic
     end
 
@@ -138,8 +139,8 @@ context 'CuteQueue' do
 
   context 'adds two commands' do
     setup do
-      topic.push_cmd(CuteCommand.new('echo hi1', :priority => 1))
-      topic.push_cmd(CuteCommand.new('echo hi2', :priority => 2))
+      topic.push_cmd(Cuted::Command.new('echo hi1', :priority => 1))
+      topic.push_cmd(Cuted::Command.new('echo hi2', :priority => 2))
       topic
     end
 
