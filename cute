@@ -7,29 +7,42 @@
 # Enqueues a command to be executed by cuted.
 
 require 'trollop'
+require 'drb'
 
-# Setup the default server pipe path that might be overwritten.
-config = {'server_pipe' => File.expand_path('~/.cuted.sock')}
+config = {'server_uri' => 'druby://localhost:1987'}
 
 # If we have the environment variable, use that instead.
-config['server_pipe'] = ENV['cuted_pipe'] if ENV['cuted_pipe']
+config['server_uri'] = ENV['cuted_server'] if ENV['cuted_server']
 
 options = Trollop::options do
   opt :dir, 'run command in a dir other than the CWD', :default => Dir.pwd
-  opt :count, 'count of this process', :default => 1
-  opt :pipe, 'server pipe to submit commands to', :default => config['server_pipe']
+  opt :weight, 'weight of this command', :default => 1
+  opt :priority, 'priority of this command', :default => 0
+  opt :server, 'server to submit commands to', :type => :string, :default => config['server_uri']
 end
 Trollop::die 'cute: You must specify a command' if ARGV.length < 1
 
 # Join together the rest of the arguments as the command.
 cmd = ARGV.join(' ')
 
-# Make sure the server is runing by checking to see if the pipe is real.
-if not File.pipe?(options[:pipe])
-  STDERR.puts 'cute: Can not find cuted pipe at '#{options[:pipe]}'; did not execute command'
-  exit -1
-end
+begin
+  DRb.start_service
+  queue = DRbObject.new(nil, options[:server])
 
-File.open(options[:pipe], 'w') do |cmd_pipe|
-  cmd_pipe.puts("#{cmd}\x00#{options[:dir]}\x00#{options[:count]}")
+  # Get the real command stored in the queue.
+  cmd = queue.push_cmd(cmd)
+
+  # Set up attributes.
+  cmd.dir = options[:dir]
+  cmd.priority = options[:priority]
+  cmd.weight = options[:weight]
+
+  # Try to run tasks.
+  queue.work
+
+  puts "Command '#{cmd}' submitted"
+rescue DRb::DRbConnError => err
+  puts "Could not connect to '#{options[:server]}'"
+
+  exit 1
 end
