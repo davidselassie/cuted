@@ -19,7 +19,8 @@ Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
   logger = Logger.new(STDOUT)
 
   # Set up defaults that might be overwritten.
-  config = {'max_concurrent' => 4, 'log' => 'cute.log', 'server_pipe' => '~/.cuted.sock'}
+  config = {'max_concurrent' => 4, 'log' => 'cute.log',
+    'uri' => 'drbunix:///tmp/cuted.sock'}
   # See if there's any user settings in ~/.cuterc and write them on top.
   if File.exists?(File.expand_path('~/.cuterc'))
     config.merge!(ParseConfig.new(File.expand_path('~/.cuterc')).params)
@@ -33,11 +34,12 @@ Daemons.run_proc('cuted', :dir => '~', :log_output => true) do
   logger.info "Will notify Prowl key #{config['prowl_key']} of completions" if config['prowl_key']
 
   begin
-    queue = CuteQueue.new(:logger => logger, :defaults => {:prowl_key => config['prowl_key']})
-    DRb.start_service('druby://localhost:1987', queue)
+    queue = CuteQueue.new(:logger => logger,
+                          :defaults => {:prowl_key => config['prowl_key']})
+    DRb.start_service(config['uri'], queue)
 
     logger.info "Running on #{DRb.uri}"
-    ENV['cuted_server'] = DRb.uri
+    ENV['cuted_uri'] = DRb.uri
 
     # Wait. Let clients call methods on the queue.
     DRb.thread.join

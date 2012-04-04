@@ -9,16 +9,16 @@
 require 'trollop'
 require 'drb'
 
-config = {'server_uri' => 'druby://localhost:1987'}
+config = {'uri' => 'drbunix:///tmp/cuted.sock'}
 
 # If we have the environment variable, use that instead.
-config['server_uri'] = ENV['cuted_server'] if ENV['cuted_server']
+config['uri'] = ENV['cuted_uri'] if ENV['cuted_uri']
 
 options = Trollop::options do
   opt :dir, 'run command in a dir other than the CWD', :default => Dir.pwd
   opt :weight, 'weight of this command', :default => 1
   opt :priority, 'priority of this command', :default => 0
-  opt :server, 'server to submit commands to', :type => :string, :default => config['server_uri']
+  opt :uri, 'server to submit commands to', :type => :string, :default => config['uri']
 end
 Trollop::die 'cute: You must specify a command' if ARGV.length < 1
 
@@ -38,7 +38,7 @@ begin
   cmd.weight = options[:weight]
 
   # Try to run tasks.
-  queue.work
+  queue.pop_run
 
   puts "Command '#{cmd}' submitted"
 rescue DRb::DRbConnError => err
